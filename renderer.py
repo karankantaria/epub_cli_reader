@@ -91,6 +91,7 @@ def render_page(
     line_offset: int,
     chapter_idx: int,
     total_chapters: int,
+    resumed: bool = False,
 ) -> int:
     """Draw one page. Returns the number of content lines shown."""
     term_w, term_h = shutil.get_terminal_size((120, 40))
@@ -147,10 +148,12 @@ def render_page(
     status.append(f'  {progress}%  ', style='on #252526')
     if at_end:
         status.append('  END  ', style='bold on #4ec9b0')
+    if resumed:
+        status.append('  ↩ resumed  ', style='bold on #1e4620')
 
     hint = Text()
     hint.append(
-        '  j/↓ k/↑ scroll   d/u half-page   Space/b page   n/p chapter   t toc   q quit',
+        '  j/↓ k/↑ scroll   d/u half-page   Space/b page   n/p chapter   t toc   r reset   Esc panic   q quit',
         style='dim',
     )
 
@@ -189,5 +192,5 @@ def render_toc(book_title: str, chapters: List[dict], cursor: int) -> None:
     os.system('cls' if os.name == 'nt' else 'clear')
     console.print(syntax)
     hint = Text()
-    hint.append('\n  j/k navigate   Enter to jump   any key to return', style='dim')
+    hint.append('\n  j/k navigate   Enter to jump   Esc panic   q quit', style='dim')
     console.print(hint)
