@@ -1,5 +1,5 @@
 # epub_cli_reader
-Read EPUB files in the terminal, disguised as syntax-highlighted Python code.
+Read EPUB files in the terminal, disguised as syntax-highlighted Python code. Saves progress.
 
 ## Screenshots
 
