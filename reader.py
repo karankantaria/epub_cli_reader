@@ -336,11 +336,14 @@ def main() -> None:
                 get_key()
 
         elif key == 'r':
-            clear_progress(args.epub_file)
-            chapter_idx = 0
-            line_offset = 0
-            toc_cursor  = 0
-            nav_since_save = 0
+            os.system('cls' if os.name == 'nt' else 'clear')
+            print('\n  reset all progress? press r to confirm, any other key to cancel')
+            if get_key() == 'r':
+                clear_progress(args.epub_file)
+                chapter_idx = 0
+                line_offset = 0
+                toc_cursor  = 0
+                nav_since_save = 0
 
 
 if __name__ == '__main__':

@@ -221,17 +221,32 @@ def render_page(
 
 
 def render_toc(book_title: str, chapters: List[dict], cursor: int) -> None:
+    term_w, term_h = shutil.get_terminal_size((120, 40))
     fp, _ = fake_path(book_title, 'table_of_contents')
 
+    # How many chapter rows fit: subtract code header (4), footer (4), hint (2), buffer (2)
+    max_visible = max(5, term_h - 12)
+    total = len(chapters)
+
+    if total <= max_visible:
+        start, end = 0, total
+    else:
+        half  = max_visible // 2
+        start = max(0, cursor - half)
+        end   = min(total, start + max_visible)
+        if end == total:
+            start = max(0, total - max_visible)
+
     rows = []
-    for i, ch in enumerate(chapters):
+    for i in range(start, end):
         marker = '# >>' if i == cursor else '#   '
-        title  = ch['title'].replace('"', "'")[:65]
+        title  = chapters[i]['title'].replace('"', "'")[:65]
         rows.append(f'    {marker} {i + 1:02d}. {title}')
 
+    scroll_note = f'  # {start + 1}–{end} of {total}' if total > max_visible else ''
     code = (
         f'# {fp}\n'
-        f'# Chapter index\n'
+        f'# Chapter index{scroll_note}\n'
         f'\n'
         f'CHAPTERS = [\n'
         + ',\n'.join(rows) + ',\n'
