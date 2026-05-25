@@ -174,6 +174,8 @@ def main() -> None:
     shown = 20
     # Autosave counter: save every _AUTOSAVE_INTERVAL navigation steps
     nav_since_save = 0
+    # True once the reader reaches the chapter bottom; next down press advances
+    at_chapter_end = False
 
     while True:
         # ── Render ────────────────────────────────────────────────────
@@ -275,12 +277,18 @@ def main() -> None:
             break
 
         elif key in ('j', 'DOWN'):
-            if line_offset >= max_off and chapter_idx < len(chapters) - 1:
-                nav(delta_chapter=+1)
+            if line_offset >= max_off:
+                if at_chapter_end and chapter_idx < len(chapters) - 1:
+                    nav(delta_chapter=+1)
+                    at_chapter_end = False
+                else:
+                    at_chapter_end = True   # first press at bottom: stop here
             else:
+                at_chapter_end = False
                 nav(new_offset=line_offset + 1)
 
         elif key in ('k', 'UP'):
+            at_chapter_end = False
             if line_offset == 0 and chapter_idx > 0:
                 nav(delta_chapter=-1)
                 prev_wrapped = get_wrapped(chapter_idx)
@@ -290,35 +298,48 @@ def main() -> None:
                 nav(new_offset=line_offset - 1)
 
         elif key == 'd':
+            at_chapter_end = False
             nav(new_offset=line_offset + shown // 2)
 
         elif key == 'u':
+            at_chapter_end = False
             nav(new_offset=line_offset - shown // 2)
 
         elif key in ('f', ' ', 'PGDN'):
-            if line_offset >= max_off and chapter_idx < len(chapters) - 1:
-                nav(delta_chapter=+1)
+            if line_offset >= max_off:
+                if at_chapter_end and chapter_idx < len(chapters) - 1:
+                    nav(delta_chapter=+1)
+                    at_chapter_end = False
+                else:
+                    at_chapter_end = True
             else:
+                at_chapter_end = False
                 nav(new_offset=line_offset + shown)
 
         elif key in ('b', 'PGUP'):
+            at_chapter_end = False
             nav(new_offset=line_offset - shown)
 
         elif key == 'g':
+            at_chapter_end = False
             nav(new_offset=0)
 
         elif key == 'G':
+            at_chapter_end = False
             nav(new_offset=max_off)
 
         elif key == 'n':
+            at_chapter_end = False
             if chapter_idx < len(chapters) - 1:
                 nav(delta_chapter=+1)
 
         elif key == 'p':
+            at_chapter_end = False
             if chapter_idx > 0:
                 nav(delta_chapter=-1)
 
         elif key == 't':
+            at_chapter_end = False
             in_toc = True
             toc_cursor = chapter_idx
 
