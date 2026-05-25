@@ -12,6 +12,20 @@ from rich.text import Text
 console = Console()
 
 # Lines in the fake-code "frame" that wrap the book content:
+#
+# Default mode (docstring):
+#   # filepath            (1)
+#   # comment             (2)
+#   <blank>               (3)
+#   class Name:           (4)
+#       """               (5)
+#   --- content lines ---
+#       """               (+1)
+#   <blank>               (+2)
+#       def __init__:     (+3)
+#           body          (+4)
+#
+# --high mode (comment + code between paragraphs):
 #   # filepath            (1)
 #   # comment             (2)
 #   <blank>               (3)
@@ -34,8 +48,8 @@ def content_line_count(term_h: int) -> int:
 
 def wrap_width(term_w: int) -> int:
     gutter = 8   # Rich line-number column
-    prefix = 6   # '    # ' comment prefix
-    return max(30, term_w - gutter - prefix - 2)
+    indent = 4   # inside docstring (default); comment prefix adds 2 more, still fits
+    return max(30, term_w - gutter - indent - 2)
 
 
 # ── Fake path helpers ────────────────────────────────────────────────────────
@@ -116,6 +130,7 @@ def render_page(
     chapter_idx: int,
     total_chapters: int,
     resumed: bool = False,
+    high_mode: bool = False,
 ) -> int:
     """Draw one page. Returns the number of content lines shown."""
     term_w, term_h = shutil.get_terminal_size((120, 40))
@@ -129,20 +144,35 @@ def render_page(
     while len(page) < n_lines:
         page.append('')
 
-    content_lines = '\n'.join(_code_line(ln, i) for i, ln in enumerate(page))
-
-    code = (
-        f'# {fp}\n'
-        f'# Analysis pipeline — {chapter_title[:45]}\n'
-        f'\n'
-        f'class {cls}:\n'
-        f'\n'
-        f'{content_lines}\n'
-        f'\n'
-        f'    def __init__(self) -> None:\n'
-        f'        self._cache: dict = {{}}\n'
-        f'        self._initialized: bool = True\n'
-    )
+    if high_mode:
+        body = '\n'.join(_code_line(ln, i) for i, ln in enumerate(page))
+        code = (
+            f'# {fp}\n'
+            f'# Analysis pipeline — {chapter_title[:45]}\n'
+            f'\n'
+            f'class {cls}:\n'
+            f'\n'
+            f'{body}\n'
+            f'\n'
+            f'    def __init__(self) -> None:\n'
+            f'        self._cache: dict = {{}}\n'
+            f'        self._initialized: bool = True\n'
+        )
+    else:
+        safe    = [ln.replace('"""', '"') for ln in page]
+        indented = '\n'.join(f'    {ln}' for ln in safe)
+        code = (
+            f'# {fp}\n'
+            f'# Documentation module — auto-generated\n'
+            f'\n'
+            f'class {cls}:\n'
+            f'    """\n'
+            f'{indented}\n'
+            f'    """\n'
+            f'\n'
+            f'    def __init__(self):\n'
+            f'        self._initialized = True\n'
+        )
 
     syntax = Syntax(code, 'python', theme='monokai', line_numbers=True, start_line=base_ln)
 

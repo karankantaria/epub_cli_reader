@@ -91,6 +91,8 @@ def main() -> None:
     parser.add_argument('epub_file', help='Path to the .epub file')
     parser.add_argument('-c', '--chapter', type=int, default=None, metavar='N',
                         help='Start at chapter N (0-indexed); overrides saved position')
+    parser.add_argument('--high', action='store_true',
+                        help='Stealth mode: prose as comments, code between paragraphs')
     args = parser.parse_args()
 
     try:
@@ -174,6 +176,7 @@ def main() -> None:
                 chapter_idx,
                 len(chapters),
                 resumed=resumed,
+                high_mode=args.high,
             )
             resumed = False  # ↩ badge shows only on the first render after loading
 
