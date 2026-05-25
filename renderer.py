@@ -6,8 +6,10 @@ import textwrap
 from typing import List, Tuple
 
 from rich.console import Console
+from rich.panel import Panel
 from rich.syntax import Syntax
 from rich.text import Text
+from rich import box
 
 console = Console()
 
@@ -205,7 +207,7 @@ def render_page(
 
     hint = Text()
     hint.append(
-        '  j/↓ k/↑ scroll   d/u half-page   Space/b page   n/p chapter   t toc   r reset   Esc panic   q quit',
+        '  j/↓ k/↑ scroll   d/u half-page   Space/b page   n/p chapter   t toc   w define   r reset   Esc panic   q quit',
         style='dim',
     )
 
@@ -246,3 +248,40 @@ def render_toc(book_title: str, chapters: List[dict], cursor: int) -> None:
     hint = Text()
     hint.append('\n  j/k navigate   Enter to jump   Esc panic   q quit', style='dim')
     console.print(hint)
+
+
+def render_definition(word: str, data) -> None:
+    """Render a dictionary definition full-screen. Caller waits for keypress after."""
+    os.system('cls' if os.name == 'nt' else 'clear')
+
+    content = Text()
+
+    if data is None:
+        content.append('\n  No definition found for ', style='dim')
+        content.append(f'"{word}"', style='white')
+        content.append('.', style='dim')
+        content.append('\n\n  Check your spelling or internet connection.\n', style='dim')
+    else:
+        content.append('\n')
+        for meaning in data.get('meanings', []):
+            pos = meaning.get('partOfSpeech', '')
+            content.append(f'  {pos}\n', style='italic #888888')
+            for defn in meaning.get('definitions', [])[:3]:
+                content.append(f'\n  • ', style='dim')
+                content.append(defn.get('definition', '') + '\n', style='white')
+                if ex := defn.get('example'):
+                    content.append(f'    "{ex}"\n', style='italic dim')
+            content.append('\n')
+
+    phonetic = ''
+    if data:
+        phonetic = next(
+            (p.get('text', '') for p in data.get('phonetics', []) if p.get('text')), ''
+        )
+
+    title = f'[bold white]{word}[/bold white]'
+    if phonetic:
+        title += f'  [dim]{phonetic}[/dim]'
+
+    console.print(Panel(content, title=title, border_style='dim white', box=box.ROUNDED))
+    console.print('\n  [dim]press any key to continue reading...[/dim]')

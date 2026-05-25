@@ -5,6 +5,7 @@ epub-reader — Read EPUB files in the terminal, disguised as code.
 Usage:
     python reader.py book.epub
     python reader.py book.epub --chapter 3
+    python reader.py book.epub --high
 
 Keys:
     j / ↓       scroll down one line
@@ -14,24 +15,38 @@ Keys:
     n / p       next / previous chapter
     g / G       top / bottom of chapter
     t           table of contents
+    w           look up a word in the dictionary
     r           reset position (forget saved place)
     Esc         toggle panic view (fake Python module)
     q           quit
 """
 
 import argparse
+import json
 import os
 import sys
 import shutil
+import urllib.request
 from typing import List
 
 from epub_parser import load_epub
 from panic import render_panic, FAKE_CODE
 from progress import load_progress, save_progress, clear_progress
-from renderer import render_page, render_toc, wrap_chapter, wrap_width, content_line_count
+from renderer import render_page, render_toc, render_definition, wrap_chapter, wrap_width, content_line_count
 
 # How many navigation steps between autosaves
 _AUTOSAVE_INTERVAL = 20
+
+
+def _fetch_definition(word: str):
+    """Look up a word via the Free Dictionary API. Returns parsed entry or None."""
+    try:
+        url = f'https://api.dictionaryapi.dev/api/v2/entries/en/{word.lower().strip()}'
+        req = urllib.request.Request(url, headers={'User-Agent': 'onyx-reader/1.0'})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            return json.loads(resp.read())[0]
+    except Exception:
+        return None
 
 
 # ── Keyboard input ────────────────────────────────────────────────────────────
@@ -306,6 +321,19 @@ def main() -> None:
         elif key == 't':
             in_toc = True
             toc_cursor = chapter_idx
+
+        elif key == 'w':
+            os.system('cls' if os.name == 'nt' else 'clear')
+            print('\n  ◆ dictionary\n')
+            try:
+                word = input('  word: ').strip()
+            except (EOFError, KeyboardInterrupt):
+                word = ''
+            if word:
+                print('\n  looking up...', end='\r', flush=True)
+                data = _fetch_definition(word)
+                render_definition(word, data)
+                get_key()
 
         elif key == 'r':
             clear_progress(args.epub_file)
