@@ -16,12 +16,12 @@ console = Console()
 #   # comment             (2)
 #   <blank>               (3)
 #   class Name:           (4)
-#       """               (5)
+#   <blank>               (5)
 #   --- content lines ---
-#       """               (+1)
-#   <blank>               (+2)
-#       def __init__:     (+3)
-#           body          (+4)
+#   <blank>               (+1)
+#       def __init__:     (+2)
+#           cache         (+3)
+#           initialized   (+4)
 _HEADER_LINES = 5
 _FOOTER_LINES = 4
 _UI_LINES = 3   # tab bar + status bar + hint line
@@ -33,9 +33,9 @@ def content_line_count(term_h: int) -> int:
 
 
 def wrap_width(term_w: int) -> int:
-    gutter = 8   # Rich line-number column
-    indent = 4   # inside docstring
-    return max(30, term_w - gutter - indent - 2)
+    gutter  = 8   # Rich line-number column
+    overhead = 15  # longest code prefix + suffix: '    buf.append("' + '")'
+    return max(30, term_w - gutter - overhead - 2)
 
 
 # ── Fake path helpers ────────────────────────────────────────────────────────
@@ -47,10 +47,10 @@ def _slug(s: str) -> str:
 
 def fake_path(book_title: str, chapter_title: str) -> Tuple[str, str]:
     book_slug = _slug(book_title)
-    ch_slug = _slug(chapter_title)
+    ch_slug   = _slug(chapter_title)
     dirs = ['src/core', 'src/utils', 'lib/analysis', 'src/modules', 'core/processing']
-    idx = int(hashlib.md5(book_slug.encode()).hexdigest(), 16) % len(dirs)
-    fp = f"{dirs[idx]}/{book_slug}/{ch_slug}.py"
+    idx  = int(hashlib.md5(book_slug.encode()).hexdigest(), 16) % len(dirs)
+    fp   = f"{dirs[idx]}/{book_slug}/{ch_slug}.py"
     return fp, f"{ch_slug}.py"
 
 
@@ -82,6 +82,36 @@ def wrap_chapter(text: str, width: int) -> List[str]:
     return result
 
 
+# ── Per-line code transforms ─────────────────────────────────────────────────
+
+# Monokai colours each form gets:
+#   comment   → green         log.info  → teal fn + yellow str
+#   yield     → pink kw       buf.appnd → teal fn + yellow str
+#   data =    → white + yell  emit      → teal fn + yellow str
+#   out[idx]  → white + yell  assert    → pink kw + yellow str
+_FORMS = [
+    lambda t: f'    # {t}',
+    lambda t: f'    log.info("{t}")',
+    lambda t: f'    yield "{t}"',
+    lambda t: f'    buf.append("{t}")',
+    lambda t: f'    data = "{t}"',
+    lambda t: f'    emit("{t}")',
+    lambda t: f'    out[idx] = "{t}"',
+    lambda t: f'    assert ctx, "{t}"',
+]
+
+# Blank lines become short syntactic fragments for visual variety
+_BLANK_FORMS = ['', '    ...', '', '    pass']
+
+
+def _code_line(text: str, idx: int) -> str:
+    """Map one wrapped text line to a plausible Python code line."""
+    if not text.strip():
+        return _BLANK_FORMS[idx % len(_BLANK_FORMS)]
+    safe = text.replace('\\', '\\\\').replace('"', "'")
+    return _FORMS[idx % len(_FORMS)](safe)
+
+
 # ── Renderers ────────────────────────────────────────────────────────────────
 
 def render_page(
@@ -98,56 +128,54 @@ def render_page(
     n_lines = content_line_count(term_h)
 
     fp, fname = fake_path(book_title, chapter_title)
-    cls = classname(chapter_title)
-    base_ln = 280 + chapter_idx * 170
+    cls       = classname(chapter_title)
+    base_ln   = 280 + chapter_idx * 170
 
     page = wrapped[line_offset: line_offset + n_lines]
     while len(page) < n_lines:
         page.append('')
 
-    # Escape triple-double-quotes so they don't break the syntax token
-    safe = [ln.replace('"""', '"') for ln in page]
-    indented = '\n'.join(f'    {ln}' for ln in safe)
+    content_lines = '\n'.join(_code_line(ln, i) for i, ln in enumerate(page))
 
     code = (
         f'# {fp}\n'
-        f'# Documentation module — auto-generated\n'
+        f'# Analysis pipeline — {chapter_title[:45]}\n'
         f'\n'
         f'class {cls}:\n'
-        f'    """\n'
-        f'{indented}\n'
-        f'    """\n'
         f'\n'
-        f'    def __init__(self):\n'
-        f'        self._initialized = True\n'
+        f'{content_lines}\n'
+        f'\n'
+        f'    def __init__(self) -> None:\n'
+        f'        self._cache: dict = {{}}\n'
+        f'        self._initialized: bool = True\n'
     )
 
     syntax = Syntax(code, 'python', theme='monokai', line_numbers=True, start_line=base_ln)
 
-    total = len(wrapped)
+    total    = len(wrapped)
     progress = min(100, int(((line_offset + n_lines) / max(total, 1)) * 100))
-    cur_ln = base_ln + _HEADER_LINES + line_offset
-    at_end = line_offset + n_lines >= total
+    cur_ln   = base_ln + _HEADER_LINES + line_offset
+    at_end   = line_offset + n_lines >= total
 
     # Tab bar
     tabs = Text()
-    tabs.append('  main.py  ', style='dim on #2d2d2d')
+    tabs.append('  main.py  ',   style='dim on #2d2d2d')
     tabs.append('  config.py  ', style='dim on #2d2d2d')
-    tabs.append(f'  {fname}  ', style='bold white on #1e1e1e')
-    tabs.append('  utils.py  ', style='dim on #2d2d2d')
-    tabs.append('  tests.py  ', style='dim on #2d2d2d')
+    tabs.append(f'  {fname}  ',  style='bold white on #1e1e1e')
+    tabs.append('  utils.py  ',  style='dim on #2d2d2d')
+    tabs.append('  tests.py  ',  style='dim on #2d2d2d')
 
     # Status bar
     status = Text()
-    status.append('  ⎇ main  ', style='bold on #0e639c')
-    status.append(f'  {fname}  ', style='on #37373d')
-    status.append('  Python 3.11  ', style='on #252526')
-    status.append('  UTF-8  ', style='on #252526')
+    status.append('  ⎇ main  ',                       style='bold on #0e639c')
+    status.append(f'  {fname}  ',                     style='on #37373d')
+    status.append('  Python 3.11  ',                  style='on #252526')
+    status.append('  UTF-8  ',                        style='on #252526')
     status.append(f'  Ch {chapter_idx + 1}/{total_chapters}  ', style='on #252526')
-    status.append(f'  Ln {cur_ln}, Col 1  ', style='on #252526')
-    status.append(f'  {progress}%  ', style='on #252526')
+    status.append(f'  Ln {cur_ln}, Col 1  ',          style='on #252526')
+    status.append(f'  {progress}%  ',                 style='on #252526')
     if at_end:
-        status.append('  END  ', style='bold on #4ec9b0')
+        status.append('  END  ',      style='bold on #4ec9b0')
     if resumed:
         status.append('  ↩ resumed  ', style='bold on #1e4620')
 
@@ -172,7 +200,7 @@ def render_toc(book_title: str, chapters: List[dict], cursor: int) -> None:
     rows = []
     for i, ch in enumerate(chapters):
         marker = '# >>' if i == cursor else '#   '
-        title = ch['title'].replace('"', "'")[:65]
+        title  = ch['title'].replace('"', "'")[:65]
         rows.append(f'    {marker} {i + 1:02d}. {title}')
 
     code = (
