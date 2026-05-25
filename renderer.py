@@ -33,9 +33,9 @@ def content_line_count(term_h: int) -> int:
 
 
 def wrap_width(term_w: int) -> int:
-    gutter  = 8   # Rich line-number column
-    overhead = 15  # longest code prefix + suffix: '    buf.append("' + '")'
-    return max(30, term_w - gutter - overhead - 2)
+    gutter = 8   # Rich line-number column
+    prefix = 6   # '    # ' comment prefix
+    return max(30, term_w - gutter - prefix - 2)
 
 
 # ── Fake path helpers ────────────────────────────────────────────────────────
@@ -84,32 +84,26 @@ def wrap_chapter(text: str, width: int) -> List[str]:
 
 # ── Per-line code transforms ─────────────────────────────────────────────────
 
-# Monokai colours each form gets:
-#   comment   → green         log.info  → teal fn + yellow str
-#   yield     → pink kw       buf.appnd → teal fn + yellow str
-#   data =    → white + yell  emit      → teal fn + yellow str
-#   out[idx]  → white + yell  assert    → pink kw + yellow str
-_FORMS = [
-    lambda t: f'    # {t}',
-    lambda t: f'    log.info("{t}")',
-    lambda t: f'    yield "{t}"',
-    lambda t: f'    buf.append("{t}")',
-    lambda t: f'    data = "{t}"',
-    lambda t: f'    emit("{t}")',
-    lambda t: f'    out[idx] = "{t}"',
-    lambda t: f'    assert ctx, "{t}"',
+# Text lines → green comments (readable prose, looks like inline docs).
+# Paragraph breaks (blank lines in `wrapped`) → one colorful code expression
+# so a glance looks like a well-commented, active codebase.
+_BETWEEN_FORMS = [
+    lambda i: f'    result = _pipeline.flush(batch_id={i})',
+    lambda i:  '    _counter += 1',
+    lambda i:  '    log.debug("checkpoint: %d", _processed)',
+    lambda i:  '    _state.advance(force=False)',
+    lambda i:  '    assert _ctx.is_valid(), "state error"',
+    lambda i:  '    yield _buffer.snapshot()',
+    lambda i:  '    _result = dict(zip(_keys, _values))',
+    lambda i:  '    _cache.update({"ts": time.time()})',
 ]
-
-# Blank lines become short syntactic fragments for visual variety
-_BLANK_FORMS = ['', '    ...', '', '    pass']
 
 
 def _code_line(text: str, idx: int) -> str:
-    """Map one wrapped text line to a plausible Python code line."""
+    """Prose line → comment; blank (paragraph break) → colorful code expression."""
     if not text.strip():
-        return _BLANK_FORMS[idx % len(_BLANK_FORMS)]
-    safe = text.replace('\\', '\\\\').replace('"', "'")
-    return _FORMS[idx % len(_FORMS)](safe)
+        return _BETWEEN_FORMS[idx % len(_BETWEEN_FORMS)](idx)
+    return f'    # {text}'
 
 
 # ── Renderers ────────────────────────────────────────────────────────────────
