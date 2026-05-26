@@ -219,7 +219,7 @@ def main() -> None:
     log_tick           = 0
     _last_activity_time = time.monotonic()
     _last_drift_time    = 0.0
-    _needs_animation   = args.drift or args.log or args.activity
+    _needs_animation   = args.drift or args.log or args.activity or args.debug
 
     while True:
         # ── Drift auto-scroll ──────────────────────────────────────────

@@ -197,23 +197,81 @@ def _diff_code(fp: str, page: List[str], base_ln: int, chapter_idx: int) -> str:
     return '\n'.join(lines)
 
 
-def _debug_panel(chapter_idx: int, line_offset: int) -> Panel:
+def _debug_panel(chapter_idx: int, line_offset: int, n_lines: int = 20) -> Panel:
     t = Text()
+    # Syntax block height = n_lines + header(5) + footer(4).
+    # SIMPLE box subtracts 2 border rows from usable panel content height.
+    panel_h = n_lines + _HEADER_LINES + _FOOTER_LINES - 2
+
+    # ── VARIABLES ─────────────────────────────────────────────────────────────
     t.append('  VARIABLES\n', style='bold #569cd6')
     t.append('  ' + '─' * 22 + '\n', style='dim')
     for name, val_fn in _DEBUG_VARS:
-        val = val_fn(chapter_idx, line_offset)
         t.append(f'  {name}\n', style='#9cdcfe')
-        t.append(f'    {val}\n', style='#ce9178')
+        t.append(f'    {val_fn(chapter_idx, line_offset)}\n', style='#ce9178')
+    used = 2 + len(_DEBUG_VARS) * 2  # 18
+
+    # ── CALL STACK ────────────────────────────────────────────────────────────
     t.append('\n  CALL STACK\n', style='bold #569cd6')
     t.append('  ' + '─' * 22 + '\n', style='dim')
-    for frame in [
-        f'process_batch (l.{282 + chapter_idx * 3})',
-        f'flush_buffer  (l.{195 + chapter_idx})',
-        'run_pipeline  (l.87)',
-        '__main__      (l.12)',
+    for active, frame in [
+        (True,  f'process_batch (l.{282 + chapter_idx * 3})'),
+        (False, f'flush_buffer  (l.{195 + chapter_idx})'),
+        (False,  'run_pipeline  (l.87)'),
+        (False,  '__main__      (l.12)'),
     ]:
-        t.append(f'  {frame}\n', style='dim #aaaaaa')
+        prefix = '▶ ' if active else '  '
+        style  = '#cccccc' if active else 'dim #888888'
+        t.append(f'  {prefix}{frame}\n', style=style)
+    used += 1 + 2 + 4  # 7  →  total 25
+
+    remaining = panel_h - used
+
+    # ── WATCH (≥ 6 lines free) ────────────────────────────────────────────────
+    if remaining >= 6:
+        watch = [
+            ('_buffer.size',     str(chapter_idx * 7 + max(0, line_offset) // 3)),
+            ('_state == ACTIVE', 'True'),
+            ('len(_results)',    str(chapter_idx * 3 + 1)),
+        ]
+        t.append('\n  WATCH\n', style='bold #569cd6')
+        t.append('  ' + '─' * 22 + '\n', style='dim')
+        n_watch = min(len(watch), (remaining - 3) // 2)
+        for expr, val in watch[:n_watch]:
+            t.append(f'  {expr}\n', style='#9cdcfe')
+            t.append(f'    {val}\n', style='#ce9178')
+        used += 1 + 2 + n_watch * 2
+        remaining = panel_h - used
+
+    # ── BREAKPOINTS (≥ 5 lines free) ─────────────────────────────────────────
+    if remaining >= 5:
+        t.append('\n  BREAKPOINTS\n', style='bold #569cd6')
+        t.append('  ' + '─' * 22 + '\n', style='dim')
+        t.append(f'  ● dispatcher.py:{282 + chapter_idx * 3}\n', style='#f14c4c')
+        t.append(f'  ◌ pipeline.py:{195 + chapter_idx}\n',       style='dim #f14c4c')
+        used += 1 + 2 + 2  # 5
+        remaining = panel_h - used
+
+    # ── DEBUG CONSOLE (≥ 4 lines free) ───────────────────────────────────────
+    if remaining >= 4:
+        t.append('\n  DEBUG CONSOLE\n', style='bold #569cd6')
+        t.append('  ' + '─' * 22 + '\n', style='dim')
+        history = [
+            ('_ctx.is_valid()',          'True'),
+            ('_state.name',             "'ACTIVE'"),
+            (f'_stats["ok"]',           str(chapter_idx * 100 + line_offset * 3)),
+            ('_cfg.batch_size',         '256'),
+            ('round(_stage.avg_ms, 2)', '0.84'),
+            ('_cfg.tag',                f'"{_short_hash(chapter_idx, 2)}"'),
+        ]
+        space   = remaining - 3  # subtract blank + header + sep
+        entries = min(len(history), max(0, space - 1) // 2)
+        for cmd, result in history[-entries:]:
+            t.append(f'  > {cmd}\n',  style='dim #888888')
+            t.append(f'  {result}\n', style='#cccccc')
+        cursor = '█' if int(_time.monotonic() * 2) % 2 == 0 else ' '
+        t.append(f'  > {cursor}', style='#4ec9b0')
+
     return Panel(t, title='[dim]Debug[/dim]', border_style='dim #569cd6', box=box.SIMPLE)
 
 
@@ -369,7 +427,7 @@ def render_page(
     console.print(tabs)
 
     if debug_mode:
-        dbg = _debug_panel(chapter_idx, line_offset)
+        dbg = _debug_panel(chapter_idx, line_offset, n_lines)
         tbl = Table.grid(padding=0, expand=True)
         tbl.add_column(ratio=64)
         tbl.add_column(ratio=36)
