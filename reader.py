@@ -6,6 +6,19 @@ Usage:
     python reader.py book.epub
     python reader.py book.epub --chapter 3
     python reader.py book.epub --high
+    python reader.py book.epub --diff
+    python reader.py book.epub --debug
+    python reader.py book.epub --drift --log --activity
+
+Rendering modes (mutually exclusive — pick at most one):
+    --high        Prose as green comments, code expressions between paragraphs
+    --diff        Content disguised as a git diff review
+    --debug       Content with a fake debug variable panel on the right
+
+Ambient overlays (freely stackable with each other and any rendering mode):
+    --drift       Auto-scroll when idle (45 s grace, then 1 line every 3 s)
+    --log         Ambient server log panel at the bottom
+    --activity    Pulsing activity: indexing spinner, test runner, build progress
 
 Keys:
     j / ↓       scroll down one line
@@ -26,20 +39,22 @@ import json
 import os
 import sys
 import shutil
+import time
 import urllib.request
 from typing import List
 
 from epub_parser import load_epub
 from panic import render_panic, FAKE_CODE
 from progress import load_progress, save_progress, clear_progress
-from renderer import render_page, render_toc, render_definition, wrap_chapter, wrap_width, content_line_count
+from renderer import (
+    render_page, render_toc, render_definition,
+    wrap_chapter, wrap_width, content_line_count, mode_overhead,
+)
 
-# How many navigation steps between autosaves
 _AUTOSAVE_INTERVAL = 20
 
 
 def _fetch_definition(word: str):
-    """Look up a word via the Free Dictionary API. Returns parsed entry or None."""
     try:
         url = f'https://api.dictionaryapi.dev/api/v2/entries/en/{word.lower().strip()}'
         req = urllib.request.Request(url, headers={'User-Agent': 'onyx-reader/1.0'})
@@ -84,7 +99,7 @@ def get_key() -> str:
                 if nxt == '[':
                     code = sys.stdin.read(1)
                     if code in ('5', '6'):
-                        sys.stdin.read(1)  # consume trailing '~'
+                        sys.stdin.read(1)
                     return {'A': 'UP', 'B': 'DOWN', 'C': 'RIGHT', 'D': 'LEFT',
                             '5': 'PGUP', '6': 'PGDN'}.get(code, 'UNKNOWN')
                 return 'ESC'
@@ -93,6 +108,22 @@ def get_key() -> str:
             return ch
         finally:
             termios.tcsetattr(fd, termios.TCSADRAIN, old)
+
+
+def get_key_timed(timeout: float = 0.25) -> str:
+    """Return next key or '' after timeout seconds with no keypress."""
+    if os.name == 'nt':
+        import msvcrt
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if msvcrt.kbhit():
+                return get_key()
+            time.sleep(0.04)
+        return ''
+    else:
+        import select
+        r, _, _ = select.select([sys.stdin], [], [], timeout)
+        return get_key() if r else ''
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -106,9 +137,24 @@ def main() -> None:
     parser.add_argument('epub_file', help='Path to the .epub file')
     parser.add_argument('-c', '--chapter', type=int, default=None, metavar='N',
                         help='Start at chapter N (0-indexed); overrides saved position')
-    parser.add_argument('--high', action='store_true',
+    # Rendering modes
+    parser.add_argument('--high',     action='store_true',
                         help='Stealth mode: prose as comments, code between paragraphs')
+    parser.add_argument('--diff',     action='store_true',
+                        help='Disguise content as a git diff review')
+    parser.add_argument('--debug',    action='store_true',
+                        help='Show content alongside a fake debug variable panel')
+    # Ambient overlays
+    parser.add_argument('--drift',    action='store_true',
+                        help='Auto-scroll when idle (45 s grace, then 1 line/3 s)')
+    parser.add_argument('--log',      action='store_true',
+                        help='Ambient server log panel at the bottom')
+    parser.add_argument('--activity', action='store_true',
+                        help='Pulsing activity: indexing, tests, builds, Copilot')
     args = parser.parse_args()
+
+    if sum([args.high, args.diff, args.debug]) > 1:
+        parser.error('--high, --diff, and --debug are mutually exclusive')
 
     try:
         print('Loading...', end='\r', flush=True)
@@ -126,36 +172,33 @@ def main() -> None:
 
     # ── Restore or set starting position ──
     if args.chapter is not None:
-        # Explicit --chapter flag overrides saved progress
-        chapter_idx = max(0, min(args.chapter, len(chapters) - 1))
+        chapter_idx    = max(0, min(args.chapter, len(chapters) - 1))
         saved_fraction = 0.0
-        resumed = False
+        resumed        = False
     else:
         saved_chapter, saved_fraction = load_progress(args.epub_file)
         chapter_idx = max(0, min(saved_chapter, len(chapters) - 1))
-        resumed = saved_chapter > 0 or saved_fraction > 0.0
+        resumed     = saved_chapter > 0 or saved_fraction > 0.0
 
-    # line_offset within the chapter is resolved after the first wrap (below)
-    line_offset = 0
-    in_toc   = False
-    in_panic = False
-    toc_cursor    = chapter_idx
-    panic_offset  = 0
-    panic_shown   = 20
-    _PANIC_TOTAL  = len(FAKE_CODE.splitlines())
+    line_offset  = 0
+    in_toc       = False
+    in_panic     = False
+    toc_cursor   = chapter_idx
+    panic_offset = 0
+    panic_shown  = 20
+    _PANIC_TOTAL = len(FAKE_CODE.splitlines())
 
-    # Cache wrapped text per (chapter_index, terminal_width)
     wrap_cache: dict = {}
+    _mode = 'diff' if args.diff else 'debug' if args.debug else 'normal'
 
     def get_wrapped(idx: int) -> List[str]:
         term_w, _ = shutil.get_terminal_size((120, 40))
-        cache_key = (idx, term_w)
+        cache_key  = (idx, term_w, _mode)
         if cache_key not in wrap_cache:
-            wrap_cache[cache_key] = wrap_chapter(chapters[idx]['content'], wrap_width(term_w))
+            wrap_cache[cache_key] = wrap_chapter(chapters[idx]['content'], wrap_width(term_w, _mode))
         return wrap_cache[cache_key]
 
     def current_fraction() -> float:
-        """Position within the current chapter as a 0.0–1.0 fraction."""
         total = len(get_wrapped(chapter_idx))
         return line_offset / max(total - 1, 1)
 
@@ -165,19 +208,35 @@ def main() -> None:
     # Resolve saved fraction → line_offset for the starting chapter
     wrapped = get_wrapped(chapter_idx)
     if resumed:
+        _extra      = mode_overhead(log=args.log, activity=args.activity)
         line_offset = round(saved_fraction * max(len(wrapped) - 1, 1))
-        # Clamp to valid range in case the epub changed since last read
-        max_off_start = max(0, len(wrapped) - content_line_count(shutil.get_terminal_size((120, 40))[1]))
+        max_off_start = max(0, len(wrapped) - content_line_count(shutil.get_terminal_size((120, 40))[1], _extra))
         line_offset = min(line_offset, max_off_start)
 
-    # Tracks how many content lines were shown last render (for page-scroll math)
-    shown = 20
-    # Autosave counter: save every _AUTOSAVE_INTERVAL navigation steps
-    nav_since_save = 0
-    # True once the reader reaches the chapter bottom; next down press advances
-    at_chapter_end = False
+    shown              = 20
+    nav_since_save     = 0
+    at_chapter_end     = False
+    log_tick           = 0
+    _last_activity_time = time.monotonic()
+    _last_drift_time    = 0.0
+    _needs_animation   = args.drift or args.log or args.activity
 
     while True:
+        # ── Drift auto-scroll ──────────────────────────────────────────
+        if args.drift and not in_panic and not in_toc:
+            now = time.monotonic()
+            if now - _last_activity_time > 45.0 and now - _last_drift_time > 3.0:
+                _wr  = get_wrapped(chapter_idx)
+                _max = max(0, len(_wr) - shown)
+                if line_offset < _max:
+                    line_offset      += 1
+                    _last_drift_time  = now
+                elif chapter_idx < len(chapters) - 1:
+                    chapter_idx      += 1
+                    line_offset       = 0
+                    toc_cursor        = chapter_idx
+                    _last_drift_time  = now
+
         # ── Render ────────────────────────────────────────────────────
         if in_panic:
             panic_shown = render_panic(panic_offset)
@@ -185,6 +244,8 @@ def main() -> None:
             render_toc(book_title, chapters, toc_cursor)
         else:
             wrapped = get_wrapped(chapter_idx)
+            if args.log:
+                log_tick += 1
             shown = render_page(
                 book_title,
                 chapters[chapter_idx]['title'],
@@ -194,22 +255,32 @@ def main() -> None:
                 len(chapters),
                 resumed=resumed,
                 high_mode=args.high,
+                diff_mode=args.diff,
+                debug_mode=args.debug,
+                log_tick=log_tick if args.log else None,
+                show_activity=args.activity,
             )
-            resumed = False  # ↩ badge shows only on the first render after loading
+            resumed = False
 
         try:
-            key = get_key()
+            key = get_key_timed(0.25) if _needs_animation else get_key()
         except KeyboardInterrupt:
             key = 'QUIT'
 
-        # ── Panic mode (Escape toggles; q still quits) ────────────────
+        if key:
+            _last_activity_time = time.monotonic()
+
+        if not key:
+            continue
+
+        # ── Panic mode ────────────────────────────────────────────────
         if in_panic:
             max_panic = max(0, _PANIC_TOTAL - panic_shown)
             if key in ('q', 'QUIT'):
                 do_save()
                 os.system('cls' if os.name == 'nt' else 'clear')
                 return
-            elif key in ('ESC',):
+            elif key == 'ESC':
                 in_panic = False
             elif key in ('j', 'DOWN'):
                 panic_offset = min(panic_offset + 1, max_panic)
@@ -244,7 +315,7 @@ def main() -> None:
             elif key in ('k', 'UP'):
                 toc_cursor = max(toc_cursor - 1, 0)
             elif key in ('\r', '\n', 'l', 'n', ' '):
-                in_toc = False
+                in_toc      = False
                 chapter_idx = toc_cursor
                 line_offset = 0
             else:
@@ -257,13 +328,12 @@ def main() -> None:
         max_off = max(0, total - shown)
 
         def nav(delta_chapter: int = 0, new_offset: int = None) -> None:
-            """Apply a navigation step and tick the autosave counter."""
             nonlocal chapter_idx, line_offset, toc_cursor, nav_since_save
             if delta_chapter:
                 chapter_idx += delta_chapter
-                chapter_idx = max(0, min(chapter_idx, len(chapters) - 1))
-                line_offset = 0
-                toc_cursor  = chapter_idx
+                chapter_idx  = max(0, min(chapter_idx, len(chapters) - 1))
+                line_offset  = 0
+                toc_cursor   = chapter_idx
             elif new_offset is not None:
                 line_offset = max(0, min(new_offset, max_off))
             nav_since_save += 1
@@ -282,7 +352,7 @@ def main() -> None:
                     nav(delta_chapter=+1)
                     at_chapter_end = False
                 else:
-                    at_chapter_end = True   # first press at bottom: stop here
+                    at_chapter_end = True
             else:
                 at_chapter_end = False
                 nav(new_offset=line_offset + 1)
@@ -292,8 +362,9 @@ def main() -> None:
             if line_offset == 0 and chapter_idx > 0:
                 nav(delta_chapter=-1)
                 prev_wrapped = get_wrapped(chapter_idx)
-                _, term_h = shutil.get_terminal_size((120, 40))
-                line_offset = max(0, len(prev_wrapped) - content_line_count(term_h))
+                _, term_h    = shutil.get_terminal_size((120, 40))
+                _extra       = mode_overhead(log=args.log, activity=args.activity)
+                line_offset  = max(0, len(prev_wrapped) - content_line_count(term_h, _extra))
             else:
                 nav(new_offset=line_offset - 1)
 
@@ -340,7 +411,7 @@ def main() -> None:
 
         elif key == 't':
             at_chapter_end = False
-            in_toc = True
+            in_toc     = True
             toc_cursor = chapter_idx
 
         elif key == 'w':
@@ -361,9 +432,9 @@ def main() -> None:
             print('\n  reset all progress? press r to confirm, any other key to cancel')
             if get_key() == 'r':
                 clear_progress(args.epub_file)
-                chapter_idx = 0
-                line_offset = 0
-                toc_cursor  = 0
+                chapter_idx    = 0
+                line_offset    = 0
+                toc_cursor     = 0
                 nav_since_save = 0
 
 
