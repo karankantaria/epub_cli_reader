@@ -2,6 +2,7 @@ import hashlib
 import os
 import re
 import shutil
+import sys
 import textwrap
 import time as _time
 from typing import List, Optional, Tuple
@@ -23,6 +24,18 @@ _LOG_OVERHEAD    = 6   # 1 header line + 5 log entries
 _ACTIVITY_OVERHEAD = 1
 
 _SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+
+
+def _home() -> None:
+    """Move cursor to top-left and overwrite in-place — no black flash."""
+    sys.stdout.write('\x1b[H')
+    sys.stdout.flush()
+
+
+def _clear_below() -> None:
+    """Erase from cursor to end of screen after each frame is drawn."""
+    sys.stdout.write('\x1b[J')
+    sys.stdout.flush()
 
 _LOG_POOL = [
     "[INFO]  server started on :8080",
@@ -352,7 +365,7 @@ def render_page(
         style='dim',
     )
 
-    os.system('cls' if os.name == 'nt' else 'clear')
+    _home()
     console.print(tabs)
 
     if debug_mode:
@@ -372,6 +385,7 @@ def render_page(
     if show_activity:
         console.print(_activity_text(_time.monotonic()))
     console.print(hint)
+    _clear_below()
 
     return n_lines
 
@@ -413,16 +427,17 @@ def render_toc(book_title: str, chapters: List[dict], cursor: int) -> None:
 
     syntax = Syntax(code, 'python', theme='monokai', line_numbers=True)
 
-    os.system('cls' if os.name == 'nt' else 'clear')
+    _home()
     console.print(syntax)
     hint = Text()
     hint.append('\n  j/k navigate   Enter to jump   Esc panic   q quit', style='dim')
     console.print(hint)
+    _clear_below()
 
 
 def render_definition(word: str, data) -> None:
     """Render a dictionary definition full-screen. Caller waits for keypress after."""
-    os.system('cls' if os.name == 'nt' else 'clear')
+    _home()
 
     content = Text()
 
@@ -455,3 +470,4 @@ def render_definition(word: str, data) -> None:
 
     console.print(Panel(content, title=title, border_style='dim white', box=box.ROUNDED))
     console.print('\n  [dim]press any key to continue reading...[/dim]')
+    _clear_below()

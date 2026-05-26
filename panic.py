@@ -4,12 +4,13 @@ Press Escape to toggle between the reader and a scrollable fake Python module
 that looks like ordinary backend work.
 """
 
-import os
 import shutil
 
 from rich.console import Console
 from rich.syntax import Syntax
 from rich.text import Text
+
+from renderer import _home, _clear_below
 
 console = Console()
 
@@ -389,10 +390,11 @@ def render_panic(scroll_offset: int) -> int:
         style='dim',
     )
 
-    os.system('cls' if os.name == 'nt' else 'clear')
+    _home()
     console.print(tabs)
     console.print(syntax)
     console.print(status)
     console.print(hint)
+    _clear_below()
 
     return visible
